@@ -116,6 +116,16 @@ struct ArithTreeWorker {
 		return true;
 	}
 
+	static bool sig_equal(const SigSpec &a, const SigSpec &b)
+	{
+		if (GetSize(a) != GetSize(b))
+			return false;
+		for (int i = 0; i < GetSize(a); i++)
+			if (a[i] != b[i])
+				return false;
+		return true;
+	}
+
 	Cell *sole_chainable_consumer(SigSpec sig, const pool<Cell *> &candidates)
 	{
 		Cell *consumer = nullptr;
@@ -134,13 +144,40 @@ struct ArithTreeWorker {
 			else if (consumer != c)
 				return nullptr;
 		}
+
+		if (consumer == nullptr)
+			return nullptr;
+
 		// A link truncates its own result at its own Y width. That truncation
 		// is invisible only if the consumer truncates at least as hard, since
 		// (x % 2**link) % 2**parent == x % 2**parent only when parent <= link.
 		// A link narrower than its consumer discards a carry that the wider
 		// consumer would otherwise see, so it must not be flattened away.
-		if (consumer != nullptr && GetSize(sig) < GetSize(consumer->getPort(ID::Y)))
+		if (GetSize(sig) < GetSize(consumer->getPort(ID::Y)))
 			return nullptr;
+
+		const SigSpec port_a = sigmap(consumer->getPort(ID::A));
+		const SigSpec port_b = sigmap(consumer->getPort(ID::B));
+
+		const bool match_a = sig_equal(port_a, sig);
+		const bool match_b = sig_equal(port_b, sig);
+
+		if (!match_a && !match_b)
+			return nullptr;
+
+		if (match_a && match_b)
+			return nullptr;
+
+		const SigSpec &other_port = match_a ? port_b : port_a;
+		for (const auto &bit : other_port) {
+			if (bit.wire == nullptr)
+				continue;
+			for (const auto &sbit : sig) {
+				if (bit == sbit)
+					return nullptr;
+			}
+		}
+
 		return consumer;
 	}
 
@@ -216,11 +253,7 @@ struct ArithTreeWorker {
 
 		SigSpec child_y = sigmap(child->getPort(ID::Y));
 		SigSpec parent_b = sigmap(parent->getPort(ID::B));
-		for (auto bit : child_y)
-			for (auto pbit : parent_b)
-				if (bit == pbit)
-					return true;
-		return false;
+		return sig_equal(child_y, parent_b);
 	}
 
 	std::vector<Operand> extract_chain_operands(const pool<Cell *> &chain, Cell *root, const dict<Cell *, Cell *> &parent_of, int &neg_compensation)

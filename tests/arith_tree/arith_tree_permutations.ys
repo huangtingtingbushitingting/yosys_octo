@@ -1,0 +1,193 @@
+# Regression tests for Issue #6324: arith_tree bit permutation dropping
+#
+# When an intermediate sum in an add/sub chain is subjected to a bit permutation
+# (rotation, reversal, byte swap, swizzle), arith_tree must NOT flatten the chain
+# because bit permutations do not commute with addition.
+#
+# Once fixed, all tests in this file should pass equiv_opt -assert arith_tree.
+
+# -------------------------------------------------------------
+# Case 1: 4-bit rotate right by 1 (Issue #6324 repro)
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case1_rotr1(input [3:0] a, b, d, output [3:0] y);
+    wire [3:0] c = a + b;
+    assign y = {c[0], c[3:1]} + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 2: 4-bit bit-reversal
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case2_bitrev(input [3:0] a, b, d, output [3:0] y);
+    wire [3:0] c = a + b;
+    assign y = {c[0], c[1], c[2], c[3]} + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 3: 4-bit adjacent swap
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case3_adjswap(input [3:0] a, b, d, output [3:0] y);
+    wire [3:0] c = a + b;
+    assign y = {c[2], c[3], c[0], c[1]} + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 4a: 16-bit byte swap
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case4a_byteswap16(input [15:0] a, b, d, output [15:0] y);
+    wire [15:0] c = a + b;
+    assign y = {c[7:0], c[15:8]} + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 4b: 32-bit halfword swap
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case4b_halfwordswap32(input [31:0] a, b, d, output [31:0] y);
+    wire [31:0] c = a + b;
+    assign y = {c[15:0], c[31:16]} + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 5a: Permutation in subtraction (child = sub)
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case5a_sub_child(input [3:0] a, b, d, output [3:0] y);
+    wire [3:0] c = a - b;
+    assign y = {c[0], c[3:1]} + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 5b: Permutation in subtraction (parent = sub, port A)
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case5b_sub_parent_porta(input [3:0] a, b, d, output [3:0] y);
+    wire [3:0] c = a + b;
+    assign y = {c[0], c[3:1]} - d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 5c: Permutation in subtraction (parent = sub, port B)
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case5c_sub_parent_portb(input [3:0] a, b, d, output [3:0] y);
+    wire [3:0] c = a + b;
+    assign y = d - {c[0], c[3:1]};
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 6: Permutation with signed operands
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case6_signed_rotr(input signed [3:0] a, b, d, output signed [3:0] y);
+    wire signed [3:0] c = a + b;
+    assign y = $signed({c[0], c[3:1]}) + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 7: Valid unpermuted chained adders (must continue to optimize!)
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case7_valid_add(input [3:0] a, b, d, output [3:0] y);
+    wire [3:0] c = a + b;
+    assign y = c + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -load postopt
+select -assert-count 1 t:$fa
+select -assert-count 1 t:$add
+design -reset
+
+# -------------------------------------------------------------
+# Case 8: Split-port consumption (child split across ports A and B)
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case8_split_ports(input [7:0] a, b, input [3:0] d, output [3:0] y);
+    wire [7:0] c = a + b;
+    assign y = c[3:0] + c[7:4] + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 9: Distributed sub-slices with external signals
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case9_subslice_erasure(input [3:0] a, b, input [2:0] d, input [3:0] e, output [3:0] y);
+    wire [3:0] c = a + b;
+    assign y = {1'b0, c[2:0]} + {c[3], d} + e;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
+# -------------------------------------------------------------
+# Case 10: Reconvergent self-addition (c + c + d)
+# -------------------------------------------------------------
+read_verilog <<EOT
+module case10_self_add(input [3:0] a, b, d, output [3:0] y);
+    wire [3:0] c = a + b;
+    assign y = c + c + d;
+endmodule
+EOT
+hierarchy -auto-top
+proc
+equiv_opt -assert arith_tree
+design -reset
+
